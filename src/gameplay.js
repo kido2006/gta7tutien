@@ -5,10 +5,10 @@
 export function createGameplaySystem(ctx, THREE) {
   const SAVE_KEY = 'giangho_dailo_save_v1';
   const isMobile = Boolean(ctx?.isMobile || ctx?.engine?.isMobile);
-  const TARGET_TRAFFIC_COUNT = isMobile ? 8 : 14;
+  const TARGET_TRAFFIC_COUNT = isMobile ? 10 : 18;
   const BEACH_PED_COUNT = isMobile ? 4 : 6;
-  const PIER_PED_COUNT = isMobile ? 3 : 4;
-  const TARGET_PED_COUNT = isMobile ? 14 : 22;
+  const PIER_PED_COUNT = isMobile ? 2 : 4;
+  const TARGET_PED_COUNT = isMobile ? 10 : 18;
   const INVULNERABILITY_DURATION_MS = 300_000;
   const NO_COOLDOWN_DURATION_MS = 100_000;
   let invulnerableUntil = 0;
@@ -1120,6 +1120,9 @@ export function createGameplaySystem(ctx, THREE) {
     const px = ctx.player?.x ?? 26;
     const pz = ctx.player?.z ?? 28;
 
+    const pFwdX = Math.sin(ctx.player?.yaw ?? 0);
+    const pFwdZ = Math.cos(ctx.player?.yaw ?? 0);
+
     for (let attempt = 0; attempt < 24; attempt++) {
       const fromNode = pickRandom(gridNodes);
       const toNode = pickRandom(fromNode.neighbors);
@@ -1127,13 +1130,18 @@ export function createGameplaySystem(ctx, THREE) {
       const progress = randRange(0.18, 0.78);
       const lane = computeLaneCoords(fromNode, toNode, progress);
       const dPlayer = dist2D(lane.x, lane.z, px, pz);
-      if (nearPlayer && (dPlayer < 28 || dPlayer > 165)) continue;
+      if (nearPlayer && (dPlayer < 52 || dPlayer > 175)) continue;
+
+      // Never pop traffic right in front of the player's driving path
+      const toLaneX = (lane.x - px) / (dPlayer || 1);
+      const toLaneZ = (lane.z - pz) / (dPlayer || 1);
+      if (toLaneX * pFwdX + toLaneZ * pFwdZ > 0.35 && dPlayer < 85) continue;
 
       let blocked = false;
       const vList = ctx.vehicles?.list || [];
       for (let i = 0; i < vList.length; i++) {
         const v = vList[i];
-        if (v && dist2D(lane.x, lane.z, v.x, v.z) < 12) { blocked = true; break; }
+        if (v && dist2D(lane.x, lane.z, v.x, v.z) < 16) { blocked = true; break; }
       }
       if (blocked) continue;
 
@@ -1280,17 +1288,24 @@ export function createGameplaySystem(ctx, THREE) {
 
       const fwdX = Math.sin(car.yaw);
       const fwdZ = Math.cos(car.yaw);
+      const nearIntersection = remDist < 18.0;
       for (let j = 0; j < vList.length; j++) {
         const other = vList[j];
-        if (!other || other === car) continue;
+        if (!other || other === car || other.isHeli) continue;
         const ox = other.x - car.x;
         const oz = other.z - car.z;
         const ahead = ox * fwdX + oz * fwdZ;
-        if (ahead > 2.2 && ahead < 16.5) {
+        if (ahead > 1.0 && ahead < 22.0) {
           const lat = Math.abs(-ox * fwdZ + oz * fwdX);
-          if (lat < 2.6) {
-            if (ahead < 8.5) { desiredSpeed = 0; braking = true; }
-            else desiredSpeed = Math.min(desiredSpeed, (other.speed ?? 0) * 0.8);
+          const latLimit = nearIntersection ? 5.6 : 3.3;
+          if (lat < latLimit) {
+            if (ahead < 11.5) {
+              desiredSpeed = 0;
+              braking = true;
+            } else {
+              desiredSpeed = Math.min(desiredSpeed, Math.max(0, (other.speed ?? 0) * 0.72));
+              braking = true;
+            }
           }
         }
       }
@@ -1427,28 +1442,50 @@ export function createGameplaySystem(ctx, THREE) {
   function pickSidewalkSpawn(nearPlayer = true) {
     const px = ctx.player?.x ?? 26;
     const pz = ctx.player?.z ?? 28;
-    for (let attempt = 0; attempt < 20; attempt++) {
-      const alongAve = Math.random() < 0.5;
+    for (let attempt = 0; attempt < 30; attempt++) {
+      const alongAve = Math.random() < 0.55;
       let x = 0, z = 0, yaw = 0;
       if (alongAve) {
         const ave = pickRandom(AVENUES_X);
         const side = Math.random() < 0.5 ? -1 : 1;
-        const halfRoad = Math.abs(ave - 40) < 1 ? 11.0 : 8.0;
-        x = ave + side * (halfRoad + 2.1);
-        z = clamp(pz + randRange(-115, 115), -205, 205);
+        const off = Math.abs(ave - 40) < 1 ? 13.4 : 10.4;
+        x = ave + side * off;
+        z = clamp(pz + randRange(-95, 95), -202, 202);
         yaw = Math.random() < 0.5 ? 0 : Math.PI;
       } else {
         const st = pickRandom(STREETS_Z);
         const side = Math.random() < 0.5 ? -1 : 1;
-        z = st + side * 10.1;
-        x = clamp(px + randRange(-115, 115), -122, 212);
+        z = st + side * 10.4;
+        x = clamp(px + randRange(-95, 95), -118, 206);
         yaw = Math.random() < 0.5 ? Math.PI / 2 : -Math.PI / 2;
       }
+      // Reject if point falls inside any road/intersection surface
+      let onRoad = false;
+      for (let k = 0; k < AVENUES_X.length; k++) {
+        const ax = AVENUES_X[k];
+        if (Math.abs(x - ax) <= (ax === 40 ? 11.8 : 8.8)) { onRoad = true; break; }
+      }
+      if (!onRoad) {
+        for (let k = 0; k < STREETS_Z.length; k++) {
+          if (Math.abs(z - STREETS_Z[k]) <= 8.8) { onRoad = true; break; }
+        }
+      }
+      if (onRoad) continue;
+
       const d = dist2D(x, z, px, pz);
-      if (nearPlayer && (d < 16 || d > 145)) continue;
+      if (nearPlayer && (d < 24 || d > 115)) continue;
+
+      // Reject if another ped is already standing within 2.6m
+      let crowded = false;
+      for (let k = 0; k < peds.length; k++) {
+        const op = peds[k];
+        if (op && !op.dead && dist2D(x, z, op.x, op.z) < 2.6) { crowded = true; break; }
+      }
+      if (crowded) continue;
+
       return { x, y: 0.22, z, yaw };
     }
-    return { x: 20, y: 0.22, z: 36, yaw: 0 };
+    return { x: 26.6, y: 0.22, z: 36, yaw: 0 };
   }
 
   function spawnAmbientPed(preferredZone = null) {
@@ -1826,47 +1863,157 @@ export function createGameplaySystem(ctx, THREE) {
         const awayZ = ped.z - gunfireAlert.z;
         const awayLen = Math.hypot(awayX, awayZ) || 1;
         ped.yaw = lerpAngle(ped.yaw, Math.atan2(awayX, awayZ), clamp(dt * 7, 0, 1));
-        ped.x += (awayX / awayLen) * 4.7 * dt;
-        ped.z += (awayZ / awayLen) * 4.7 * dt;
+        ped.x = clamp(ped.x + (awayX / awayLen) * 4.7 * dt, -194, 214);
+        ped.z = clamp(ped.z + (awayZ / awayLen) * 4.7 * dt, -212, 212);
         animState = 'run';
         if (ped.panicTimer <= 0) ped.state = 'walk';
       } else {
-        ped.turnTimer -= dt;
         if (ped.state === 'idle') {
           ped.idleTimer -= dt;
           animState = 'idle';
-          if (ped.idleTimer <= 0) { ped.state = 'walk'; ped.turnTimer = randRange(5, 11); }
-        } else {
+          if (ped.idleTimer <= 0) {
+            ped.state = 'walk';
+            ped.turnTimer = randRange(3.5, 8.0);
+          }
+        } else if (ped.zone === 'beach' || ped.zone === 'pier') {
+          ped.turnTimer -= dt;
           if (ped.turnTimer <= 0) {
-            ped.turnTimer = randRange(4, 10);
-            if (ped.zone === 'beach' || ped.zone === 'pier') {
-              if (Math.random() < 0.28) { ped.state = 'idle'; ped.idleTimer = randRange(2.5, 6.0); }
-              else ped.yaw += randRange(-1.4, 1.4);
+            ped.turnTimer = randRange(4.5, 9.5);
+            if (Math.random() < 0.25) {
+              ped.state = 'idle';
+              ped.idleTimer = randRange(2.5, 5.5);
             } else {
-              ped.yaw += (Math.random() < 0.5 ? 1 : -1) * (Math.PI / 2);
+              ped.yaw += randRange(-1.1, 1.1);
             }
           }
-          ped.x += Math.sin(ped.yaw) * 1.55 * dt;
-          ped.z += Math.cos(ped.yaw) * 1.55 * dt;
+          const spd = ped.walkSpeed || (ped.walkSpeed = randRange(1.3, 1.75));
+          ped.x += Math.sin(ped.yaw) * spd * dt;
+          ped.z += Math.cos(ped.yaw) * spd * dt;
           animState = 'walk';
 
           if (ped.zone === 'beach') {
             if (ped.x < -195 || ped.x > -135) ped.yaw = -ped.yaw;
             if (ped.z < -150 || ped.z > 150) ped.yaw = Math.PI - ped.yaw;
             ped.x = clamp(ped.x, -195, -135);
-          } else if (ped.zone === 'pier') {
+          } else {
             if (ped.x < -282 || ped.x > -154) ped.yaw = -ped.yaw;
             if (ped.z < -24 || ped.z > 16) ped.yaw = Math.PI - ped.yaw;
             ped.x = clamp(ped.x, -284, -153);
             ped.z = clamp(ped.z, -25, 17);
           }
+        } else {
+          // Structured Sidewalk-Guided City Pedestrian AI
+          if (!ped.navInit) {
+            ped.navInit = true;
+            ped.walkSpeed = randRange(1.35, 1.85);
+            // Snap to nearest Avenue or Street sidewalk
+            let bestAx = AVENUES_X[0], bestAxD = Infinity;
+            for (let k = 0; k < AVENUES_X.length; k++) {
+              const d = Math.abs(ped.x - AVENUES_X[k]);
+              if (d < bestAxD) { bestAxD = d; bestAx = AVENUES_X[k]; }
+            }
+            let bestSz = STREETS_Z[0], bestSzD = Infinity;
+            for (let k = 0; k < STREETS_Z.length; k++) {
+              const d = Math.abs(ped.z - STREETS_Z[k]);
+              if (d < bestSzD) { bestSzD = d; bestSz = STREETS_Z[k]; }
+            }
+            if (bestAxD <= bestSzD) {
+              ped.navAxis = 'z';
+              ped.navRoad = bestAx;
+              ped.navSide = ped.x >= bestAx ? 1 : -1;
+              ped.navDir = Math.random() < 0.5 ? 1 : -1;
+              const initOff = bestAx === 40 ? 13.4 : 10.4;
+              ped.x = bestAx + ped.navSide * initOff;
+            } else {
+              ped.navAxis = 'x';
+              ped.navRoad = bestSz;
+              ped.navSide = ped.z >= bestSz ? 1 : -1;
+              ped.navDir = Math.random() < 0.5 ? 1 : -1;
+              ped.z = bestSz + ped.navSide * 10.4;
+            }
+            ped.navCooldown = 1.5;
+          }
+
+          ped.navCooldown = Math.max(0, (ped.navCooldown || 0) - dt);
+          const sideOffset = (ped.navAxis === 'z' && ped.navRoad === 40) ? 13.4 : 10.4;
+          const laneCoord = ped.navRoad + ped.navSide * sideOffset;
+
+          // Check if approaching an intersection corner to turn or pause naturally
+          if (ped.navCooldown <= 0) {
+            if (ped.navAxis === 'z') {
+              for (let k = 0; k < STREETS_Z.length; k++) {
+                const sz = STREETS_Z[k];
+                const distToCorner = Math.abs(ped.z - (sz - ped.navDir * 10.4));
+                if (distToCorner < 1.3) {
+                  ped.navCooldown = 3.2;
+                  const roll = Math.random();
+                  if (roll < 0.12) {
+                    ped.state = 'idle';
+                    ped.idleTimer = randRange(2.0, 4.5);
+                  } else if (roll < 0.44) {
+                    ped.navAxis = 'x';
+                    ped.navRoad = sz;
+                    ped.navSide = ped.z >= sz ? 1 : -1;
+                    ped.navDir = Math.random() < 0.5 ? 1 : -1;
+                  }
+                  break;
+                }
+              }
+            } else {
+              for (let k = 0; k < AVENUES_X.length; k++) {
+                const ax = AVENUES_X[k];
+                const axOff = ax === 40 ? 13.4 : 10.4;
+                const distToCorner = Math.abs(ped.x - (ax - ped.navDir * axOff));
+                if (distToCorner < 1.3) {
+                  ped.navCooldown = 3.2;
+                  const roll = Math.random();
+                  if (roll < 0.12) {
+                    ped.state = 'idle';
+                    ped.idleTimer = randRange(2.0, 4.5);
+                  } else if (roll < 0.44) {
+                    ped.navAxis = 'z';
+                    ped.navRoad = ax;
+                    ped.navSide = ped.x >= ax ? 1 : -1;
+                    ped.navDir = Math.random() < 0.5 ? 1 : -1;
+                  }
+                  break;
+                }
+              }
+            }
+          }
+
+          // Reverse cleanly at city bounds
+          if (ped.navAxis === 'z' && (ped.z > 212 || ped.z < -212)) {
+            ped.navDir = ped.z > 212 ? -1 : 1;
+          } else if (ped.navAxis === 'x' && (ped.x > 212 || ped.x < -126)) {
+            ped.navDir = ped.x > 212 ? -1 : 1;
+          }
+
+          // Steer smoothly along the sidewalk lane (strictly off the road!)
+          const targetYaw = ped.navAxis === 'z'
+            ? (ped.navDir > 0 ? 0 : Math.PI)
+            : (ped.navDir > 0 ? Math.PI * 0.5 : -Math.PI * 0.5);
+          ped.yaw = lerpAngle(ped.yaw, targetYaw, clamp(dt * 8, 0, 1));
+
+          const spd = ped.walkSpeed || 1.55;
+          if (ped.navAxis === 'z') {
+            ped.z += ped.navDir * spd * dt;
+            ped.x += clamp(laneCoord - ped.x, -2.5, 2.5) * dt * 4.5;
+          } else {
+            ped.x += ped.navDir * spd * dt;
+            ped.z += clamp(laneCoord - ped.z, -2.5, 2.5) * dt * 4.5;
+          }
+          animState = 'walk';
         }
       }
 
       if (!ped.skipAABB && ctx.world?.resolveCircleAABB) {
         const prevX = ped.x, prevZ = ped.z;
         ctx.world.resolveCircleAABB(ped, 0.38);
-        if (dist2D(prevX, prevZ, ped.x, ped.z) > 0.02 && !ped.isEnemy) ped.yaw += Math.PI * 0.55;
+        if (dist2D(prevX, prevZ, ped.x, ped.z) > 0.02 && !ped.isEnemy) {
+          if (ped.navInit) ped.navDir = -ped.navDir;
+          else ped.yaw += Math.PI * 0.55;
+        }
       }
 
       if (ped.fixedY !== null) ped.y = ped.fixedY;
@@ -1888,6 +2035,31 @@ export function createGameplaySystem(ctx, THREE) {
     }
     pedAnimFrameCounter = (pedAnimFrameCounter + 1) | 0;
 
+    // Lightweight pairwise pedestrian separation so crowded sidewalks never overlap or stack NPCs
+    if ((pedAnimFrameCounter & 1) === 0) {
+      const pn = peds.length;
+      for (let i = 0; i < pn; i++) {
+        const a = peds[i];
+        if (!a || a.dead || a.fixedY !== null || a.isMissionEnemy) continue;
+        for (let j = i + 1; j < pn; j++) {
+          const b = peds[j];
+          if (!b || b.dead || b.fixedY !== null || b.isMissionEnemy) continue;
+          const dx = b.x - a.x;
+          const dz = b.z - a.z;
+          const d2 = dx * dx + dz * dz;
+          if (d2 > 0.0001 && d2 < 0.92 * 0.92) {
+            const d = Math.sqrt(d2);
+            const push = (0.92 - d) * 0.5;
+            const nx = dx / d, nz = dz / d;
+            a.x -= nx * push; a.z -= nz * push;
+            b.x += nx * push; b.z += nz * push;
+            if (a.mesh) a.mesh.position.set(a.x, a.y, a.z);
+            if (b.mesh) b.mesh.position.set(b.x, b.y, b.z);
+          }
+        }
+      }
+    }
+
     let spawnGuard = 0;
     while (ambientCount < TARGET_PED_COUNT && spawnGuard++ < 6) {
       spawnAmbientPed(null);
@@ -1901,17 +2073,19 @@ export function createGameplaySystem(ctx, THREE) {
   const policeVehicles = [];
 
   function heatToStars(h) {
-    if (h >= 92) return 5;
-    if (h >= 74) return 4;
-    if (h >= 54) return 3;
-    if (h >= 32) return 2;
-    if (h >= 12) return 1;
+    if (h >= 480) return 5;
+    if (h >= 320) return 4;
+    if (h >= 185) return 3;
+    if (h >= 85) return 2;
+    if (h >= 25) return 1;
     return 0;
   }
 
   function starsToMinHeat(s) {
-    return [0, 18, 38, 60, 80, 96][clamp(s, 0, 5)];
+    return [0, 28, 90, 195, 330, 490][clamp(s, 0, 5)];
   }
+
+  let _lastMinorHeatAt = 0;
 
   function setWantedStars(stars) {
     const s = clamp(Math.round(stars), 0, 5);
@@ -1937,13 +2111,28 @@ export function createGameplaySystem(ctx, THREE) {
     if (!p || p.inSafehouse || deathArrestState.mode) return;
     if (mission.active && mission.id === 3 && mission.stage < 3) return;
 
-    const num = Number(amount) || 15;
-    if (String(reason).includes('shoot') || String(reason).includes('kill') || String(reason).includes('explosion') || num >= 20) {
+    const rStr = String(reason || 'crime');
+    let num = Number(amount) || 15;
+
+    // Prevent rapid-fire / multi-hit bursts from skyrocketing stars in 1 second
+    const isMinor = rStr === 'hit_ped' || rStr === 'shoot_ped' || rStr === 'carjack';
+    const nowMs = performance.now();
+    if (isMinor) {
+      if (nowMs - _lastMinorHeatAt < 450) return;
+      _lastMinorHeatAt = nowMs;
+      if (wanted.stars >= 3) num *= 0.35;
+    }
+
+    // Progressive scaling: harder to climb from 3★ -> 4★ -> 5★
+    if (wanted.stars === 3) num *= 0.80;
+    else if (wanted.stars >= 4) num *= 0.65;
+
+    if (rStr.includes('shoot') || rStr.includes('kill') || rStr.includes('explosion') || num >= 20) {
       wanted.lethalForce = true;
       gunfireAlert = { x: p.x, z: p.z, timer: 4.5 };
     }
 
-    wanted.heat = clamp(wanted.heat + num, 0, 100);
+    wanted.heat = clamp(wanted.heat + num, 0, 520);
     wanted.stars = Math.max(wanted.stars, heatToStars(wanted.heat));
     if (wanted.stars >= 1) {
       wanted.spotted = true;
@@ -1984,10 +2173,15 @@ export function createGameplaySystem(ctx, THREE) {
     const pz = nearZ ?? (p?.z ?? 28);
     let sx = px, sz = pz;
     if (nearX === null) {
-      const angle = randRange(0, Math.PI * 2);
-      const dist = randRange(36, 56);
-      sx = clamp(px + Math.cos(angle) * dist, -205, 235);
-      sz = clamp(pz + Math.sin(angle) * dist, -220, 220);
+      // Spawn foot officers strictly on real sidewalks (38-75m away, never in the ocean or inside buildings!)
+      const sp = pickSidewalkSpawn(true);
+      sx = sp.x;
+      sz = sp.z;
+      if (dist2D(sx, sz, px, pz) < 34) {
+        const angle = (p?.yaw ?? 0) + Math.PI + randRange(-1.2, 1.2);
+        sx = clamp(px + Math.sin(angle) * 48, -124, 206);
+        sz = clamp(pz + Math.cos(angle) * 48, -202, 202);
+      }
     }
     const sy = getGroundY(sx, sz, 0.22);
     const officer = buildNPCEntity(isSwat ? 'swat' : 'cop', sx, sy, sz, {
@@ -2005,15 +2199,28 @@ export function createGameplaySystem(ctx, THREE) {
   function spawnPursuitVehicle(type = 'police', isRoadblock = false) {
     const p = ctx.player;
     if (!p) return null;
-    const angle = isRoadblock ? (p.yaw ?? 0) : randRange(0, Math.PI * 2);
-    const dist = isRoadblock ? 58 : randRange(52, 82);
+    const baseYaw = p.yaw ?? 0;
+    // Pursuit units spawn from BEHIND or FLANKS (68-98m); Roadblocks spawn FAR ahead (105-130m), never right in front of your face!
+    const angle = isRoadblock
+      ? baseYaw + randRange(-0.22, 0.22)
+      : baseYaw + Math.PI + randRange(-1.25, 1.25);
+    const dist = isRoadblock ? randRange(105, 130) : randRange(68, 98);
     const rawX = p.x + Math.sin(angle) * dist;
     const rawZ = p.z + Math.cos(angle) * dist;
     const snap = nearestGridNode(rawX, rawZ);
     const x = snap ? snap.x + (isRoadblock ? randRange(-3.2, 3.2) : 3.5) : rawX;
     const z = snap ? snap.z + (isRoadblock ? 0 : 3.5) : rawZ;
+
+    // Abort if snapped point is too close to player or overlapping another vehicle
+    if (dist2D(x, z, p.x, p.z) < 58) return null;
+    const vList = ctx.vehicles?.list || [];
+    for (let i = 0; i < vList.length; i++) {
+      const v = vList[i];
+      if (v && dist2D(x, z, v.x, v.z) < 14) return null;
+    }
+
     const y = getGroundY(x, z, 0.05);
-    const yaw = isRoadblock ? (p.yaw ?? 0) + Math.PI * 0.48 : Math.atan2(p.x - x, p.z - z);
+    const yaw = isRoadblock ? baseYaw + Math.PI * 0.48 : Math.atan2(p.x - x, p.z - z);
 
     const car = safeSpawnVehicle(type, x, y, z, yaw, {
       isPoliceUnit: true,

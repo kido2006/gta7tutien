@@ -19,28 +19,56 @@ function readSrc(fileName) {
   return fs.readFileSync(path.join(SRC_DIR, fileName), 'utf8');
 }
 
-function wrapModuleFactory(fileName, factoryName) {
-  const raw = readSrc(fileName);
-  // Strip ESM `export ` prefix cleanly while preserving everything inside an isolated IIFE scope
-  const cleaned = raw.replace(/^export\s+(function|const|let|var)\s+/gm, '$1 ');
-  return `// ============================================================================\n` +
-    `// MODULE: src/${fileName}\n` +
-    `// ============================================================================\n` +
-    `const ${factoryName} = (() => {\n${cleaned}\n  return ${factoryName};\n})();\n`;
+function compactSource(code) {
+  // Safe line-level compaction: removes full-line // comments, leading indentation, and blank lines
+  return code
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith('//'))
+    .join('\n');
 }
 
-const cssContent = readSrc('ui.css');
+function wrapModuleFactory(fileName, factoryName) {
+  const raw = readSrc(fileName);
+  // Strip top-level ESM `import ... from ...;` and `export ` prefix cleanly while preserving everything inside an isolated IIFE scope
+  const cleaned = compactSource(
+    raw
+      .replace(/^import\s+[\s\S]*?from\s+['"][^'"]+['"];?\s*$/gm, '')
+      .replace(/^export\s+(function|const|let|var)\s+/gm, '$1 ')
+  );
+  return `// MODULE: src/${fileName}\n` +
+    `const ${factoryName} = (() => {\n${cleaned}\nreturn ${factoryName};\n})();\n`;
+}
+
+const cssContent = readSrc('ui.css')
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .split(/\r?\n/)
+  .map((l) => l.trim())
+  .filter(Boolean)
+  .join('\n');
 
 const jsBundle = [
   wrapModuleFactory('engine.js', 'createEngine'),
   wrapModuleFactory('anticheat.js', 'createAntiCheatSystem'),
   wrapModuleFactory('world.js', 'buildWorld'),
+  wrapModuleFactory('world_infra.js', 'createWorldInfra'),
+  wrapModuleFactory('casino_world.js', 'createCasinoWorld'),
+  wrapModuleFactory('map_downtown.js', 'createMapDowntown'),
+  wrapModuleFactory('map_commercial.js', 'createMapCommercial'),
+  wrapModuleFactory('map_coast_hills.js', 'createMapCoastHills'),
   wrapModuleFactory('characters.js', 'createCharacterSystem'),
   wrapModuleFactory('vehicles.js', 'createVehicleSystem'),
+  wrapModuleFactory('vehicles_extra.js', 'createVehiclesExtra'),
+  wrapModuleFactory('customs_shops.js', 'createCustomsShops'),
   wrapModuleFactory('gameplay.js', 'createGameplaySystem'),
+  wrapModuleFactory('npc_life.js', 'createNpcLife'),
+  wrapModuleFactory('casino_games.js', 'createCasinoGames'),
+  wrapModuleFactory('nightlife_bar.js', 'createNightlifeBar'),
+  wrapModuleFactory('heists_activities.js', 'createHeistsActivities'),
   wrapModuleFactory('race_arena.js', 'createRaceArenaSystem'),
   wrapModuleFactory('ui_audio.js', 'createUIAudioAndInput'),
   wrapModuleFactory('multiplayer.js', 'createMultiplayerSystem'),
+  wrapModuleFactory('perf_core.js', 'createPerfCore'),
 ].join('\n');
 
 const htmlDocument = `<!DOCTYPE html>
@@ -48,6 +76,7 @@ const htmlDocument = `<!DOCTYPE html>
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <link rel="icon" href="data:," />
   <title>Giang Hồ Đại Lộ &amp; Bờ Biển 3D — Tân Kiếm Hiệp Thế Giới Mở (Offline &amp; Online)</title>
   <style>
 ${cssContent}
@@ -103,7 +132,7 @@ ${cssContent}
       </button>
       <div id="hud-quick-bar" class="hud-quick-bar">
         <button id="btn-open-chat" class="hud-icon-btn" type="button" title="Truyền Âm Giang Hồ [T]">💬 Truyền Âm</button>
-        <button id="btn-open-phone" class="hud-icon-btn" type="button" title="Mở Linh Thông Ngọc Giản [P / ↑]">📱 Ngọc Giản</button>
+        <button id="btn-open-phone" class="hud-icon-btn" type="button" title="Mở Truyền Âm Ngọc Giản [P / ↑]">📱 Ngọc Giản</button>
         <button id="btn-open-pause" class="hud-icon-btn" type="button" title="Tạm dừng [Esc]">⏸ Menu</button>
       </div>
     </div>
@@ -221,6 +250,14 @@ ${cssContent}
           <button type="button" class="touch-btn tbtn-special" data-act="special">TÂM PHÁP</button>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- Click-to-Resume Blur Overlay (Prevents accidental weapon fire when locking pointer!) -->
+  <div id="pointer-lock-overlay" class="hidden" style="position:fixed;inset:0;z-index:850;background:rgba(6,10,16,0.46);backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px);display:flex;align-items:center;justify-content:center;cursor:pointer;">
+    <div style="padding:20px 30px;border-radius:14px;background:rgba(12,16,24,0.88);border:1.5px solid rgba(240,195,90,0.55);box-shadow:0 18px 48px rgba(0,0,0,0.75);text-align:center;color:#f6f3eb;pointer-events:none;">
+      <div style="font-size:18px;font-weight:800;color:#f0c35a;margin-bottom:6px;letter-spacing:0.4px;">🖱️ NHẤP CHUỘT ĐỂ TIẾP TỤC HÀNH TẨU</div>
+      <div style="font-size:12.5px;color:#cbd5e1;">Khóa chuột để di chuyển &amp; xoay góc nhìn (không bị cướp cò bắn súng)</div>
     </div>
   </div>
 
@@ -460,8 +497,42 @@ function bootstrap() {
     ctx.engine.camYaw = -0.58;
     ctx.engine.camPitch = -0.10;
 
-    // 2. Neo-Wuxia Metropolis: Pagoda Roofs, Paifang Gates, Cherry Blossoms, Quan Sơn Đình & VÕ LÂM Hills
+    const safeInit = (label, fn) => {
+      try {
+        return fn();
+      } catch (err) {
+        console.warn('[Tu Tien Optional Subsystem Init: ' + label + ']', err);
+        return null;
+      }
+    };
+
+    // 2. Neo-Wuxia Metropolis + Full Tu Tien World Expansions (No Elevated Freeway)
     ctx.world = buildWorld(ctx, THREE);
+    ctx.worldInfra = safeInit('worldInfra', () => {
+      const api = createWorldInfra(ctx);
+      if (api && typeof api.init === 'function') api.init(ctx);
+      return api;
+    });
+    ctx.casinoWorld = safeInit('casinoWorld', () => {
+      const api = createCasinoWorld(ctx);
+      if (api && typeof api.init === 'function') api.init(ctx);
+      return api;
+    });
+    ctx.mapDowntown = safeInit('mapDowntown', () => {
+      const api = createMapDowntown(ctx);
+      if (api && typeof api.init === 'function') api.init(ctx);
+      return api;
+    });
+    ctx.mapCommercial = safeInit('mapCommercial', () => {
+      const api = createMapCommercial(ctx);
+      if (api && typeof api.init === 'function') api.init(ctx);
+      return api;
+    });
+    ctx.mapCoastHills = safeInit('mapCoastHills', () => {
+      const api = createMapCoastHills(ctx);
+      if (api && typeof api.init === 'function') api.init(ctx);
+      return api;
+    });
 
     // 3. 14-Joint Martial Humanoid Rig, Thanh Phong Kiếm + Kiếm Khí, Khinh Công & Ballistics
     ctx.characters = createCharacterSystem(ctx, THREE);
@@ -486,6 +557,25 @@ function bootstrap() {
 
     // 4. Sculpted Clearcoat PBR Vehicles & Thiên Ưng Phi Chu Helicopter
     ctx.vehicles = createVehicleSystem(ctx, THREE);
+
+    // 4B. Thần Câu Mô-tô, Du Thuyền Bích Ba, Cửu Thiên Thần Ưng, Thanh Long Siêu Xe, Huyền Vũ Thiết Giáp & Buồng Lái 1P
+    ctx.vehiclesExtra = safeInit('vehiclesExtra', () => {
+      const api = createVehiclesExtra(ctx);
+      if (api && typeof api.init === 'function') api.init(ctx);
+      return api;
+    });
+
+    // Capture pre-shops getGroundHeight so customs_shops's 2-arg wrapper never strips currentY from 3D callers
+    if (ctx.world && typeof ctx.world.getGroundHeight === 'function') {
+      ctx.world._preShopsGetGroundHeight = ctx.world.getGroundHeight.bind(ctx.world);
+    }
+
+    // 4C. Thiên Công Xưởng 3D, Binh Khí Các + Trường Bắn, Cẩm Y Các & Gara Cá Nhân 6 Chỗ
+    ctx.shops = safeInit('customsShops', () => {
+      const api = createCustomsShops(ctx);
+      if (api && typeof api.init === 'function') api.init(ctx);
+      return api;
+    });
 
     // 5. Neo-Wuxia HUD, 3D-Tilted Minimap, Bát Quái Wheel, Ngọc Giản, MP Chat & Web Audio
     ctx.ui = createUIAudioAndInput(ctx);
@@ -513,8 +603,42 @@ function bootstrap() {
     // 7. Traffic, Pedestrians, Lục Phiến Môn 5-Star Pursuit, Nội Công Tâm Pháp & 3 Kỳ Án Missions
     ctx.gameplay = createGameplaySystem(ctx, THREE);
 
+    // 7B. Chuyển Đổi 3 Hiệp Khách (F5/F6/F7), Y Tế/Cứu Hỏa, Bàn Chông Lục Phiến Môn & Cẩm Y Vệ SWAT
+    ctx.npcLife = safeInit('npcLife', () => {
+      const api = createNpcLife(ctx);
+      if (api && typeof api.init === 'function') api.init(ctx);
+      return api;
+    });
+
+    // 7C. Vạn Bảo Đổ Phường (10 Trò Chơi Đỏ Đen) & Túy Tiên Lâu
+    ctx.casinoGames = safeInit('casinoGames', () => {
+      const api = createCasinoGames(ctx);
+      if (api && typeof api.init === 'function') api.init(ctx);
+      return api;
+    });
+    ctx.nightlife = safeInit('nightlifeBar', () => {
+      const api = createNightlifeBar(ctx);
+      if (api && typeof api.init === 'function') api.init(ctx);
+      return api;
+    });
+
+    // 7D. Đua Đêm Giang Hồ, Lệnh Truy Nã, Thương Hội Kỳ Trân & 40 Thành Tựu
+    ctx.heists = safeInit('heistsActivities', () => {
+      const api = createHeistsActivities(ctx);
+      if (api && typeof api.init === 'function') api.init(ctx);
+      return api;
+    });
+    ctx.heistsActivities = ctx.heists;
+
     // 8. Combat Death Race Arena (Trường Đua Tử Thần — 4 Combat Cars, 7 Racers, 2 Obstacle Maps, Betting)
     ctx.raceArena = createRaceArenaSystem(ctx, THREE);
+
+    // 9. Lõi Tối Ưu FPS & Benchmark (F4 Studio Profiler, BVH Culler, Turbo Mode)
+    ctx.perfCore = safeInit('perfCore', () => {
+      const api = createPerfCore(ctx);
+      if (api && typeof api.init === 'function') api.init(ctx);
+      return api;
+    });
   } catch (initErr) {
     console.error('[Giang Ho Bootstrap Error]', initErr);
     if (fallbackMsg) {
@@ -679,12 +803,56 @@ function bootstrap() {
   });
 
   // --------------------------------------------------------------------------
+  // Click-to-Resume Blur Overlay (Prevents accidental gunshot on focus/entry!)
+  // --------------------------------------------------------------------------
+  const pointerLockOverlay = document.getElementById('pointer-lock-overlay');
+  let _resumeFireBlockUntil = 0;
+
+  function syncPointerLockOverlay() {
+    if (!pointerLockOverlay) return;
+    const isTouch = Boolean(ctx.input?.isTouchDevice);
+    const shouldShow =
+      ctx.started &&
+      !ctx.paused &&
+      !ctx.activeModal &&
+      !isTouch &&
+      document.pointerLockElement !== canvas;
+    pointerLockOverlay.classList.toggle('hidden', !shouldShow);
+  }
+
+  pointerLockOverlay?.addEventListener('mousedown', (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    _resumeFireBlockUntil = performance.now() + 260;
+    if (ctx.input) {
+      ctx.input.fire = false;
+      ctx.input.fireJustPressed = false;
+      ctx.input.aim = false;
+    }
+    pointerLockOverlay.classList.add('hidden');
+    try { canvas?.requestPointerLock?.(); } catch (_) {}
+  }, { capture: true });
+
+  document.addEventListener('pointerlockchange', syncPointerLockOverlay);
+  window.addEventListener('blur', syncPointerLockOverlay);
+
+  // --------------------------------------------------------------------------
   // Main Fault-Tolerant Animation Frame Loop
   // --------------------------------------------------------------------------
+  const safeStep = (label, fn) => {
+    try {
+      fn();
+    } catch (err) {
+      console.error('[Giang Ho Subsystem Error: ' + label + ']', err);
+    }
+  };
+
   let lastTime = performance.now();
+  let frameIdx = 0;
 
   function frame(now) {
     requestAnimationFrame(frame);
+    frameIdx = (frameIdx + 1) | 0;
 
     const rawDt = Math.min(1 / 25, Math.max(0.0005, (now - lastTime) / 1000));
     lastTime = now;
@@ -699,10 +867,30 @@ function bootstrap() {
     ctx.rawDt = rawDt;
     ctx.dt = dt;
 
+    safeStep('perfCore.beginFrame', () => {
+      if (ctx.perfCore && typeof ctx.perfCore.beginFrame === 'function') {
+        ctx.perfCore.beginFrame(now, ctx);
+      }
+    });
+
     try {
       if (ctx.input && typeof ctx.input.update === 'function') {
         ctx.input.update(rawDt, ctx);
+        // Suppress accidental click-to-resume gunshots & movement while blur overlay is active
+        const overlayVisible = pointerLockOverlay && !pointerLockOverlay.classList.contains('hidden');
+        if (overlayVisible || now < _resumeFireBlockUntil) {
+          ctx.input.fire = false;
+          ctx.input.fireJustPressed = false;
+          ctx.input.aim = false;
+          if (overlayVisible) {
+            ctx.input.moveX = 0;
+            ctx.input.moveZ = 0;
+            ctx.input.camDeltaX = 0;
+            ctx.input.camDeltaY = 0;
+          }
+        }
       }
+      if ((frameIdx % 10) === 0) syncPointerLockOverlay();
 
       if (!ctx.paused) {
         ctx.elapsed += dt;
@@ -713,16 +901,70 @@ function bootstrap() {
         if (!inActiveRace && ctx.world && typeof ctx.world.updateWorld === 'function') {
           ctx.world.updateWorld(dt, ctx.elapsed, ctx);
         }
+        if (!inActiveRace) {
+          if ((frameIdx & 1) === 0 && ctx.worldInfra?.update) {
+            safeStep('worldInfra', () => ctx.worldInfra.update(dt * 2, rawDt * 2, ctx));
+          }
+          if ((frameIdx % 4) === 0 && ctx.casinoWorld?.update) {
+            safeStep('casinoWorld', () => ctx.casinoWorld.update(dt * 4, ctx.elapsed, ctx));
+          }
+          if ((frameIdx % 3) === 0 && ctx.mapDowntown?.update) {
+            safeStep('mapDowntown', () => ctx.mapDowntown.update(dt * 3, ctx));
+          }
+          if ((frameIdx % 3) === 1 && ctx.mapCommercial?.update) {
+            safeStep('mapCommercial', () => ctx.mapCommercial.update(dt * 3, ctx));
+          }
+          if ((frameIdx % 4) === 1 && ctx.mapCoastHills?.update) {
+            safeStep('mapCoastHills', () => ctx.mapCoastHills.update(dt * 4, ctx));
+          }
+        }
 
         if (ctx.started) {
           if (inActiveRace) {
             ctx.raceArena.updateRace(dt, rawDt);
           } else {
-            if (!ctx.player.inCar && ctx.characters && typeof ctx.characters.updatePlayerOnFoot === 'function') {
+            const px = ctx.player.x;
+            const casinoActive = ctx.activeModal === 'casino' || (px >= 1100 && px <= 1300) || Boolean(ctx.casinoGames?.isOpen);
+            if (casinoActive || (frameIdx % 12) === 0) {
+              safeStep('casinoGames', () => {
+                if (ctx.casinoGames && typeof ctx.casinoGames.update === 'function') {
+                  ctx.casinoGames.update(casinoActive ? rawDt : rawDt * 12, ctx);
+                }
+              });
+            }
+            const barActive = ctx.activeModal === 'bar' || (px >= 1400 && px <= 1600) || Boolean(ctx.nightlife?.isOpen) || (ctx.nightlife?.drunkLevel || 0) > 1;
+            if (barActive || (frameIdx % 12) === 6) {
+              safeStep('nightlife', () => {
+                if (ctx.nightlife && typeof ctx.nightlife.update === 'function') {
+                  ctx.nightlife.update(barActive ? rawDt : rawDt * 12, ctx);
+                }
+              });
+            }
+
+            let shopsSteppedEarly = false;
+            if (
+              !ctx.player.inCar &&
+              ctx.shops &&
+              typeof ctx.shops.getInteractiveStationNear === 'function' &&
+              ctx.shops.getInteractiveStationNear(ctx.player.x, ctx.player.z)
+            ) {
+              shopsSteppedEarly = true;
+              safeStep('customsShops', () => {
+                const prevX = ctx.player.x;
+                const prevModal = ctx.activeModal;
+                ctx.shops.update(dt, ctx);
+                if ((ctx.activeModal !== prevModal || Math.abs(ctx.player.x - prevX) > 200) && ctx.input) {
+                  ctx.input.interactJustPressed = false;
+                }
+              });
+            }
+
+            if (!ctx.player.inCar && !ctx.activeModal && ctx.characters && typeof ctx.characters.updatePlayerOnFoot === 'function') {
               ctx.characters.updatePlayerOnFoot(dt, ctx);
             }
 
             if (
+              !ctx.activeModal &&
               ctx.input &&
               ctx.input.interactJustPressed &&
               !ctx.player.inCar &&
@@ -745,8 +987,23 @@ function bootstrap() {
               }
             }
 
-            if (ctx.vehicles && typeof ctx.vehicles.updateVehicles === 'function') {
-              ctx.vehicles.updateVehicles(dt, ctx);
+            if (!ctx.activeModal) {
+              if (ctx.vehicles && typeof ctx.vehicles.updateVehicles === 'function') {
+                ctx.vehicles.updateVehicles(dt, ctx);
+              }
+              safeStep('vehiclesExtra', () => {
+                if (ctx.vehiclesExtra && typeof ctx.vehiclesExtra.update === 'function') {
+                  ctx.vehiclesExtra.update(dt, ctx);
+                }
+              });
+            }
+
+            if (!shopsSteppedEarly && (ctx.activeModal || (frameIdx % 3) === 0)) {
+              safeStep('customsShops', () => {
+                if (ctx.shops && typeof ctx.shops.update === 'function') {
+                  ctx.shops.update(ctx.activeModal ? dt : dt * 3, ctx);
+                }
+              });
             }
 
             if (ctx.characters && typeof ctx.characters.updateProjectilesAndFX === 'function') {
@@ -755,6 +1012,173 @@ function bootstrap() {
 
             if (ctx.gameplay && typeof ctx.gameplay.updateGameplay === 'function') {
               ctx.gameplay.updateGameplay(dt, rawDt, ctx);
+            }
+
+            if ((frameIdx & 1) === 0) {
+              safeStep('npcLife', () => {
+                if (ctx.npcLife && typeof ctx.npcLife.update === 'function') {
+                  ctx.npcLife.update(dt * 2, rawDt * 2, ctx);
+                }
+              });
+            }
+
+            if (ctx.activeModal || (frameIdx % 3) === 1) {
+              safeStep('heists', () => {
+                if (ctx.heists && typeof ctx.heists.update === 'function') {
+                  ctx.heists.update(ctx.activeModal ? dt : dt * 3, ctx.activeModal ? rawDt : rawDt * 3, ctx);
+                }
+              });
+            }
+
+            // Auto-despawn destroyed/wrecked vehicles after 7s + Traffic anti-pileup & safe following spacing
+            if (ctx.vehicles && Array.isArray(ctx.vehicles.list) && typeof ctx.vehicles.removeVehicle === 'function') {
+              const vList = ctx.vehicles.list;
+              const plCar = ctx.player.inCar;
+              for (let vi = vList.length - 1; vi >= 0; vi--) {
+                const v = vList[vi];
+                if (!v || v === plCar || v.isMission || v.mpId) continue;
+                if (v.destroyed || v.alive === false || (typeof v.hp === 'number' && v.hp <= 0)) {
+                  v._wreckDespawnTimer = (v._wreckDespawnTimer || 0) + dt;
+                  if (v._wreckDespawnTimer >= 7.0) {
+                    ctx.vehicles.removeVehicle(v);
+                  }
+                  continue;
+                } else if (v._wreckDespawnTimer) {
+                  v._wreckDespawnTimer = 0;
+                }
+
+                // Prevent AI traffic cars from tailgating, piling up, or wedging into each other
+                if (v.isTraffic && !v.isParked) {
+                  const fwdX = Math.sin(v.yaw || 0);
+                  const fwdZ = Math.cos(v.yaw || 0);
+                  let blockedAhead = false;
+                  let wedged = false;
+                  for (let vj = 0; vj < vList.length; vj++) {
+                    if (vi === vj) continue;
+                    const o = vList[vj];
+                    if (!o || o.isHeli || Math.abs((o.y || 0) - (v.y || 0)) > 2.0) continue;
+                    const dx = o.x - v.x;
+                    const dz = o.z - v.z;
+                    const d2 = dx * dx + dz * dz;
+                    if (d2 < 3.4 * 3.4) {
+                      wedged = true;
+                      break;
+                    }
+                    if (d2 < 8.5 * 8.5) {
+                      const dot = dx * fwdX + dz * fwdZ;
+                      const side = Math.abs(dx * fwdZ - dz * fwdX);
+                      if (dot > 1.5 && side < 2.2) {
+                        blockedAhead = true;
+                      }
+                    }
+                  }
+                  if (blockedAhead) {
+                    v.vx *= 0.72;
+                    v.vz *= 0.72;
+                    if (typeof v.speed === 'number') v.speed *= 0.72;
+                  }
+                  if (wedged) {
+                    v._jamTimer = (v._jamTimer || 0) + dt;
+                    if (v._jamTimer >= 3.0) {
+                      ctx.vehicles.removeVehicle(v);
+                    }
+                  } else {
+                    v._jamTimer = 0;
+                  }
+                }
+              }
+            }
+
+            // Lightweight distance visibility culling + Anti-Stutter High-Speed Driving guard every 15 frames
+            if ((frameIdx % 15) === 0) {
+              const plx = ctx.player.x;
+              const plz = ctx.player.z;
+              const plCar = ctx.player.inCar;
+              const drivingFast = Boolean(plCar && Math.hypot(plCar.vx || 0, plCar.vz || 0) > 14);
+              const inRemoteInt = plx >= 500;
+              // Only hide outdoor districts when player is inside a remote interior (prevents pop-in stutter while driving fast!)
+              if (ctx.mapDowntown?.root) ctx.mapDowntown.root.visible = !inRemoteInt;
+              if (ctx.mapCommercial?.root) ctx.mapCommercial.root.visible = !inRemoteInt;
+              if (ctx.mapCoastHills?.root) ctx.mapCoastHills.root.visible = !inRemoteInt;
+              if (ctx.worldInfra?.root) ctx.worldInfra.root.visible = !inRemoteInt || (plx >= 1950 && plx <= 2250);
+              if (ctx.vehicles && Array.isArray(ctx.vehicles.list)) {
+                const vList = ctx.vehicles.list;
+                for (let vi = 0; vi < vList.length; vi++) {
+                  const v = vList[vi];
+                  if (!v || !v.mesh || v === plCar || v.isMission) continue;
+                  const dx = v.x - plx;
+                  const dz = v.z - plz;
+                  const d2 = dx * dx + dz * dz;
+                  const vehCullDist = ctx.engine?.isMobile ? 70 : 105;
+                  v.mesh.visible = d2 < vehCullDist * vehCullDist;
+                }
+              }
+              if (ctx.gameplay && Array.isArray(ctx.gameplay.peds)) {
+                const pList = ctx.gameplay.peds;
+                const AVES = [-120, -40, 40, 120, 200];
+                const STRS = [-200, -120, -40, 40, 120, 200];
+                let recycledThisTick = 0;
+                for (let pi = 0; pi < pList.length; pi++) {
+                  const ped = pList[pi];
+                  const m = ped && (ped.mesh || ped.rig?.root);
+                  if (!m || ped.isMission || ped.isDisciple) continue;
+                  const dx = (ped.x ?? m.position.x) - plx;
+                  const dz = (ped.z ?? m.position.z) - plz;
+                  const d2 = dx * dx + dz * dz;
+                  // Recycle at most 2 far-away city peds (> 115m) per tick when NOT driving fast (zero high-speed stutter!)
+                  if (!drivingFast && recycledThisTick < 2 && d2 > 115 * 115 && ped.zone === 'city' && !ped.dead && ped.state !== 'fight' && plx < 500) {
+                    const useAve = Math.random() < 0.55;
+                    let sx = plx, sz = plz;
+                    if (useAve) {
+                      let bestAx = AVES[0], bestD = Infinity;
+                      for (let k = 0; k < AVES.length; k++) {
+                        const d = Math.abs(plx - AVES[k]);
+                        if (d < bestD) { bestD = d; bestAx = AVES[k]; }
+                      }
+                      const side = Math.random() < 0.5 ? 1 : -1;
+                      const off = bestAx === 40 ? 13.4 : 10.4;
+                      sx = bestAx + side * off;
+                      const dir = Math.random() < 0.5 ? 1 : -1;
+                      sz = Math.max(-205, Math.min(205, plz + dir * (42 + Math.random() * 44)));
+                    } else {
+                      let bestSz = STRS[0], bestD = Infinity;
+                      for (let k = 0; k < STRS.length; k++) {
+                        const d = Math.abs(plz - STRS[k]);
+                        if (d < bestD) { bestD = d; bestSz = STRS[k]; }
+                      }
+                      const side = Math.random() < 0.5 ? 1 : -1;
+                      sz = bestSz + side * 10.4;
+                      const dir = Math.random() < 0.5 ? 1 : -1;
+                      sx = Math.max(-124, Math.min(205, plx + dir * (42 + Math.random() * 44)));
+                    }
+                    // Skip if another ped is already standing right there
+                    let crowded = false;
+                    for (let pj = 0; pj < pList.length; pj++) {
+                      const op = pList[pj];
+                      if (!op || op === ped || op.dead) continue;
+                      if ((op.x - sx) * (op.x - sx) + (op.z - sz) * (op.z - sz) < 2.6 * 2.6) {
+                        crowded = true;
+                        break;
+                      }
+                    }
+                    if (!crowded) {
+                      ped.x = sx;
+                      ped.z = sz;
+                      ped.y = ctx.world?.getGroundHeight ? ctx.world.getGroundHeight(sx, sz, 0.22) : 0.22;
+                      ped.navInit = false;
+                      ped.state = 'walk';
+                      m.position.set(ped.x, ped.y, ped.z);
+                      m.visible = true;
+                      recycledThisTick++;
+                    } else {
+                      m.visible = false;
+                    }
+                  } else {
+                    const pedCullDist = ctx.engine?.isMobile ? 52 : 85;
+                    m.visible = d2 < pedCullDist * pedCullDist;
+                  }
+                }
+              }
             }
 
             if (ctx.raceArena && typeof ctx.raceArena.updateRace === 'function') {
@@ -807,11 +1231,26 @@ function bootstrap() {
         ctx.input.endFrame();
       }
 
+      // Throttle perfCore.update to every 4th frame when profiler overlay & benchmark are inactive to avoid overhead
+      if ((frameIdx & 3) === 0 || ctx.perfCore?.isProfilerOpen || ctx.perfCore?.isBenchmarkRunning) {
+        safeStep('perfCore.update', () => {
+          if (ctx.perfCore && typeof ctx.perfCore.update === 'function') {
+            ctx.perfCore.update(rawDt, ctx);
+          }
+        });
+      }
+
       if (ctx.engine && typeof ctx.engine.renderFrame === 'function') {
         ctx.engine.renderFrame(rawDt, ctx);
       }
     } catch (frameErr) {
       console.error('[Giang Ho Frame Error]', frameErr);
+    } finally {
+      safeStep('perfCore.endFrame', () => {
+        if (ctx.perfCore && typeof ctx.perfCore.endFrame === 'function') {
+          ctx.perfCore.endFrame(performance.now(), ctx);
+        }
+      });
     }
   }
 

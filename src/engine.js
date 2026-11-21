@@ -190,7 +190,7 @@ export function createEngine(canvas, ctx, THREE, { EffectComposer, RenderPass, U
   const scene = new THREE.Scene();
   scene.fog = new THREE.FogExp2(0xa4d2ee, isMobileDevice ? 0.00185 : 0.00148);
 
-  const camera = new THREE.PerspectiveCamera(62, initWidth / initHeight, 0.35, isMobileDevice ? 820 : 1650);
+  const camera = new THREE.PerspectiveCamera(62, initWidth / initHeight, 0.35, isMobileDevice ? 260 : 380);
   camera.rotation.order = 'YXZ';
   camera.position.set(26, 2.8, 34);
 
@@ -1576,9 +1576,9 @@ export function createEngine(canvas, ctx, THREE, { EffectComposer, RenderPass, U
 
   function getTargetPixelRatio(tier) {
     const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
-    if (tier === 'ULTRA') return Math.min(dpr, 1.75);
-    if (tier === 'HIGH') return Math.min(dpr, isMobileDevice ? 1.15 : 1.4);
-    return isMobileDevice ? Math.min(dpr, mobileRenderScale) : 1.0;
+    if (tier === 'ULTRA') return Math.min(dpr, 1.15);
+    if (tier === 'HIGH') return Math.min(dpr, isMobileDevice ? 0.85 : 1.0);
+    return isMobileDevice ? Math.min(dpr, 0.85) : 0.9;
   }
 
   function setQuality(tier, remember = false) {
@@ -1604,7 +1604,7 @@ export function createEngine(canvas, ctx, THREE, { EffectComposer, RenderPass, U
       renderer.shadowMap.enabled = true;
       renderer.shadowMap.needsUpdate = true;
       sunLight.castShadow = true;
-      const mapDim = quality === 'ULTRA' ? 2048 : 1024;
+      const mapDim = quality === 'ULTRA' ? 1024 : 512;
       if (sunLight.shadow.mapSize.width !== mapDim) {
         sunLight.shadow.mapSize.set(mapDim, mapDim);
         if (sunLight.shadow.map) {
@@ -2140,15 +2140,15 @@ export function createEngine(canvas, ctx, THREE, { EffectComposer, RenderPass, U
   function renderFrame() {
     _shadowFrameTick = (_shadowFrameTick + 1) | 0;
     if (quality === 'ULTRA') {
-      renderer.shadowMap.needsUpdate = true;
-    } else if (quality === 'HIGH') {
       renderer.shadowMap.needsUpdate = (_shadowFrameTick & 1) === 0;
+    } else if (quality === 'HIGH') {
+      renderer.shadowMap.needsUpdate = (_shadowFrameTick & 3) === 0;
     } else {
       renderer.shadowMap.needsUpdate = false;
     }
 
     const needsPostFX =
-      quality === 'ULTRA' || currentBulletTime > 0.005 || damageFlashAmount > 0.005;
+      quality !== 'MOBILE' && (quality === 'ULTRA' || currentBulletTime > 0.005 || damageFlashAmount > 0.005);
     if (!needsPostFX) {
       renderer.render(scene, camera);
     } else {

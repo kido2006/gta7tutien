@@ -3484,6 +3484,9 @@ export function createCharacterSystem(ctx = {}, THREE) {
 
     pr.mesh.geometry = geoCache.swordQiGeo;
     pr.mesh.material = matPool.swordQiWave;
+    pr.mesh.frustumCulled = false;
+    pr.mesh.userData.perfIgnore = true;
+    pr.mesh.visible = true;
     pr.mesh.scale.setScalar(1.0);
     pr.mesh.position.set(originX, originY, originZ);
     _v1.set(originX + dirX, originY + dirY, originZ + dirZ);

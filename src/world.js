@@ -701,12 +701,15 @@ export function buildWorld(ctx, THREE) {
             }
           }
           streetlampPositions.push({ x: ax, y: 0.22, z: cz, yaw: 0, doubleArm: true });
+          addAABB(ax - 0.35, ax + 0.35, cz - 0.35, cz + 0.35, 7.5, 0, 'lamp_post');
         }
       }
 
       const lampEdge = isBlvd ? BOULEVARD_HALF_W + 1.1 : STD_ROAD_HALF_W + 1.0;
       streetlampPositions.push({ x: ax - lampEdge, y: SIDEWALK_Y, z: cz - segLen * 0.24, yaw: 0, doubleArm: false });
+      addAABB(ax - lampEdge - 0.32, ax - lampEdge + 0.32, cz - segLen * 0.24 - 0.32, cz - segLen * 0.24 + 0.32, 7.5, 0, 'lamp_post');
       streetlampPositions.push({ x: ax + lampEdge, y: SIDEWALK_Y, z: cz + segLen * 0.24, yaw: Math.PI, doubleArm: false });
+      addAABB(ax + lampEdge - 0.32, ax + lampEdge + 0.32, cz + segLen * 0.24 - 0.32, cz + segLen * 0.24 + 0.32, 7.5, 0, 'lamp_post');
     }
   }
 

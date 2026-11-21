@@ -3627,7 +3627,7 @@ export function createVehicleSystem(ctx = {}, THREE) {
     const pz = pl?.z ?? 0;
     for (let i = 0; i < n; i++) {
       const a = list[i];
-      if (!a || a.isHeli) continue;
+      if (!a || a.isHeli || a.isExtraVehicle) continue;
       if (pl && a !== plCar && !a.isMission) {
         const dxp = a.x - px;
         const dzp = a.z - pz;
@@ -3635,18 +3635,26 @@ export function createVehicleSystem(ctx = {}, THREE) {
       }
       for (let j = i + 1; j < n; j++) {
         const b = list[j];
-        if (!b || b.isHeli) continue;
+        if (!b || b.isHeli || b.isExtraVehicle) continue;
         if (Math.abs(a.y - b.y) > 1.8) continue;
 
         const dx = b.x - a.x;
         const dz = b.z - a.z;
-        const minDist = (a.width + b.width) * 0.52 + 0.55;
+        const maxReach = ((a.length || 4.4) + (b.length || 4.4)) * 0.55 + 0.6;
         const d2 = dx * dx + dz * dz;
-        if (d2 >= minDist * minDist || d2 < 0.0001) continue;
+        if (d2 >= maxReach * maxReach || d2 < 0.0001) continue;
 
         const dist = Math.sqrt(d2);
         const nx = dx / dist;
         const nz = dz / dist;
+
+        // Oriented bounding projection using both width & length along each vehicle's yaw
+        const aSin = Math.sin(a.yaw || 0), aCos = Math.cos(a.yaw || 0);
+        const bSin = Math.sin(b.yaw || 0), bCos = Math.cos(b.yaw || 0);
+        const aProj = Math.abs(nx * aCos - nz * aSin) * ((a.width || 1.95) * 0.5) + Math.abs(nx * aSin + nz * aCos) * ((a.length || 4.4) * 0.5);
+        const bProj = Math.abs(nx * bCos - nz * bSin) * ((b.width || 1.95) * 0.5) + Math.abs(nx * bSin + nz * bCos) * ((b.length || 4.4) * 0.5);
+        const minDist = aProj + bProj + 0.14;
+        if (dist >= minDist) continue;
         const overlap = minDist - dist;
 
         const totalMass = a.mass + b.mass;
@@ -3678,9 +3686,9 @@ export function createVehicleSystem(ctx = {}, THREE) {
             applyBodyDents(a);
             applyBodyDents(b);
 
-            if (impactSpd > 11.0 && !ctx.mp?.connected) {
-              if (!a.destroyed) damageVehicle(a, (impactSpd - 9) * 0.85 * shareA * 2);
-              if (!b.destroyed) damageVehicle(b, (impactSpd - 9) * 0.85 * shareB * 2);
+            if (impactSpd > 14.0 && !ctx.mp?.connected && (a === plCar || b === plCar)) {
+              if (!a.destroyed) damageVehicle(a, (impactSpd - 12) * 0.65 * shareA * 2);
+              if (!b.destroyed) damageVehicle(b, (impactSpd - 12) * 0.65 * shareB * 2);
             }
             if (ctx.player?.inCar === a || ctx.player?.inCar === b) {
               ctx.engine?.addShake?.(vClamp(impactSpd * 0.02, 0.08, 0.48));
@@ -3714,11 +3722,13 @@ export function createVehicleSystem(ctx = {}, THREE) {
 
     if (playerInput.interactJust && enterExitCooldown <= 0 && ctx.player && !ctx.player.isDead) {
       if (ctx.player.inCar) {
-        exitVehicle();
+        if (!ctx.player.inCar.isExtraVehicle) {
+          exitVehicle();
+        }
       } else if (!ctx.player.rappelState?.active && ctx.player.x < 500) {
         const nearSafehouse = Math.hypot(ctx.player.x - 24, ctx.player.z - (-80)) < 2.8;
         const candidate = findNearestEnterable(ctx.player.x, ctx.player.z, 4.6);
-        if (candidate && !nearSafehouse) {
+        if (candidate && !candidate.isExtraVehicle && !nearSafehouse) {
           enterVehicle(candidate);
         }
       }
@@ -3730,7 +3740,7 @@ export function createVehicleSystem(ctx = {}, THREE) {
 
     for (let i = 0; i < list.length; i++) {
       const car = list[i];
-      if (!car) continue;
+      if (!car || car.isExtraVehicle) continue;
       if (scene && car.mesh.parent !== scene) scene.add(car.mesh);
 
       if (car.isHeli) stepHelicopter(car, dt, playerInput, isNightMode);
@@ -3751,9 +3761,9 @@ export function createVehicleSystem(ctx = {}, THREE) {
     fx.updateFX(dt);
   }
 
-  // Spawn Initial Hero Vehicles for Single-Player Mode
+  // Spawn Initial Hero Vehicles on Sidewalks / Parking Plazas (never blocking road lanes!)
   function spawnInitialSinglePlayerCars() {
-    spawnVehicle('obey9f', 34.5, 0.05, 18.0, Math.PI, {
+    spawnVehicle('obey9f', 27.2, 0.22, 18.0, Math.PI, {
       color: 0xf2f4f7,
       plate: 'LONG 999',
       isParked: true,
@@ -3765,18 +3775,18 @@ export function createVehicleSystem(ctx = {}, THREE) {
       isParked: true,
       isHero: true
     });
-    spawnVehicle('banshee', -46.0, 0.05, 62.0, 0, {
+    spawnVehicle('banshee', -49.2, 0.22, 62.0, 0, {
       color: 0x9e1b22,
       plate: 'HOA 686',
       isParked: true,
       isHero: true
     });
-    spawnVehicle('taxi', 46.0, 0.05, -24.0, 0, {
+    spawnVehicle('taxi', 52.8, 0.22, -24.0, 0, {
       plate: 'DT 2026',
       isParked: true,
       isHero: true
     });
-    spawnVehicle('police', 142.0, 0.05, 68.0, -Math.PI * 0.5, {
+    spawnVehicle('police', 142.0, 0.22, 68.0, -Math.PI * 0.5, {
       plate: 'LPM 911',
       isParked: true,
       isHero: true,
